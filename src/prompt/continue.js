@@ -1,30 +1,33 @@
-const readline = require('readline');
-const output = require('../output');
+import { blankLine } from "../output.js";
+import { createInterface } from "node:readline";
 
 module.exports = () => {
+  const reader = createInterface({
+    input: process.stdin,
+    output: process.stdout,
+    terminal: false,
+  });
 
-    const reader = readline.createInterface({
-        input: process.stdin,
-        output: process.stdout,
-        terminal: false,
-    });
+  let question = `Do you want to continue? (y/N) > `;
 
-    let question = `Do you want to continue? (y/N) > `;
+  return new Promise((fulfill) =>
+    reader.question(question, (answer) => {
+      blankLine();
 
-    return new Promise((fulfill) => reader.question(question, (answer) => {
+      answer = (answer || "").toLowerCase();
 
-        output.blankLine();
+      reader.close();
 
-        answer = (answer || '').toLowerCase();
+      switch (answer) {
+        case "y":
+        case "yes":
+          return fulfill(true);
 
-        reader.close();
-
-        switch (answer) {
-            case 'y': case 'yes':
-                return fulfill(true);
-
-            case 'n': case 'no': default:
-                return fulfill(false);
-        }
-    }));
+        case "n":
+        case "no":
+        default:
+          return fulfill(false);
+      }
+    }),
+  );
 };

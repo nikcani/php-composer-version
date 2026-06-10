@@ -1,125 +1,151 @@
 #!/usr/bin/env node
 
-const config = require('./config');
-const Fs = require('fs-extra');
-const git = require('./bootstrap/git.bootstrap');
-const output = require('./output');
-const semver = require('semver');
-const { done, fail } = require('./helpers');
-const { mergeDeepRight, intersection } = require("ramda");
-const { promptVersion, promptContinue } = require('./prompt');
+import { simpleGit } from "simple-git";
+import { existsSync, writeFile } from "fs-extra";
+import {
+  allowDirty,
+  branch,
+  CLI_ARGUMENTS,
+  COMPOSER_JSON_DATA,
+  COMPOSER_JSON_PATH,
+  CURRENT_VERSION,
+  PACKAGE_JSON_DATA,
+  PACKAGE_JSON_PATH,
+  SELF_VERSION,
+  syncPackageJson,
+} from "./config.js";
+import {
+  blankLine,
+  branchConflictError,
+  bumpError,
+  bumpOK,
+  composerVersionUpdateError,
+  composerVersionUpdateOK,
+  error,
+  gitCommitOK,
+  gitDirtyNotice,
+  gitDirtyWarning,
+  gitOperationError,
+  gitRepoNotFound,
+  gitTagOK,
+  gray,
+  heading,
+  help,
+  notABranchError,
+  packageVersionUpdateError,
+  packageVersionUpdateOK,
+  rollbackNotice,
+  success,
+  updateDone,
+  versionPromptMessage,
+} from "./output.js";
+import { done, fail } from "./helpers.js";
+import { clean, lte, valid } from "semver";
+import { intersection, mergeDeepRight } from "ramda";
+import { promptContinue, promptVersion } from "./prompt/index.js";
 
 const selfInfoFlags = {
-    help:    ['-h', '--help'],
-    version: ['-v', '--version'],
+  help: ["-h", "--help"],
+  version: ["-v", "--version"],
 };
 
 if (argvContainsAny(...selfInfoFlags.version)) {
-    console.log(config.SELF_VERSION);
-    done();
+  console.log(SELF_VERSION);
+  done();
 }
 
-output.heading();
+heading();
 
 if (argvContainsAny(...selfInfoFlags.help)) {
-    output.help();
-    done();
+  help();
+  done();
 }
 
-output.blankLine();
-output.gray(`\t(i) Run 'php-composer-version -h' to see available options`);
+blankLine();
+gray(`\t(i) Run 'php-composer-version -h' to see available options`);
 
 /**
  * Main function (IIFE)
  */
 (async function main() {
+  blankLine();
 
-    output.blankLine();
+  try {
+    const isRepository = await simpleGit().checkIsRepo();
 
+    if (!isRepository) {
+      gitRepoNotFound();
+      return fail();
+    }
+
+    const branches = await simpleGit().branchLocal();
+
+    if (!branches.all.includes(branch)) {
+      notABranchError(branch);
+      return fail();
+    }
+
+    const status = await simpleGit().status();
+
+    if (status.current !== branch) {
+      branchConflictError(status.current);
+      return fail();
+    }
+
+    const staged = await simpleGit().diff(["--name-status", "--cached"]);
+
+    if (staged !== "") {
+      if (allowDirty) {
+        gitDirtyNotice(staged);
+      } else {
+        gitDirtyWarning(staged);
+
+        if (!(await promptContinue())) {
+          success("Aborting...");
+          return done();
+        }
+      }
+    }
+  } catch (e) {
+    gitOperationError(e);
+    return fail();
+  }
+
+  let newVersion;
+
+  if (config.newVersion) {
     try {
-
-        const isRepository = await git().checkIsRepo();
-
-        if ( ! isRepository) {
-            output.gitRepoNotFound();
-            return fail();
-        }
-
-        const branches = await git().branchLocal();
-
-        if ( ! branches.all.includes(config.branch)) {
-            output.notABranchError(config.branch);
-            return fail();
-        }
-
-        const status = await git().status();
-
-        if (status.current !== config.branch) {
-            output.branchConflictError(status.current);
-            return fail();
-        }
-
-        const staged = await git().diff([
-            '--name-status',
-            '--cached',
-        ]);
-
-        if (staged !== '') {
-
-            if (config.allowDirty) {
-                output.gitDirtyNotice(staged);
-            } else {
-
-                output.gitDirtyWarning(staged);
-
-                if ( ! await promptContinue()) {
-                    output.success('Aborting...');
-                    return done();
-                }
-            }
-        }
-
+      newVersion = await expectValidVersion(config.newVersion);
+      bumpOK();
     } catch (e) {
-        output.gitOperationError(e);
-        return fail();
+      bumpError(e);
+      fail();
+    }
+  } else {
+    newVersion = await getNewVersionFromUser();
+  }
+
+  try {
+    if (syncPackageJson) {
+      await writeVersionToPackageJson(newVersion);
     }
 
-    let newVersion;
+    await writeVersionToComposerJson(newVersion);
+    await commitAndTag(newVersion);
 
-    if (config.newVersion) {
-        try {
-            newVersion = await expectValidVersion(config.newVersion);
-            output.bumpOK();
-        } catch (e) {
-            output.bumpError(e);
-            fail();
-        }
-    } else {
-        newVersion = await getNewVersionFromUser();
+    updateDone(newVersion);
+    done();
+  } catch (e) {
+    rollbackNotice();
+
+    await rollbackComposerJson();
+
+    if (syncPackageJson) {
+      await rollbackPackageJson();
     }
 
-    try {
-        if (config.syncPackageJson) {
-            await writeVersionToPackageJson(newVersion);
-        }
-
-        await writeVersionToComposerJson(newVersion);
-        await commitAndTag(newVersion);
-
-        output.updateDone(newVersion);
-        done();
-
-    } catch (e) {
-        output.rollbackNotice();
-
-        await rollbackComposerJson();
-
-        if (config.syncPackageJson) {
-            await rollbackPackageJson();
-        }
-
-        fail();
-    }
+    fail();
+  }
 })();
 
 /**
@@ -130,24 +156,21 @@ output.gray(`\t(i) Run 'php-composer-version -h' to see available options`);
  * @return {Promise<string>}
  */
 async function getNewVersionFromUser(attempt = 1) {
+  if (attempt === 1) {
+    versionPromptMessage();
+  }
 
-    if (attempt === 1) {
-        output.versionPromptMessage();
-    }
+  try {
+    const version = await promptVersion();
 
-    try {
-        const version = await promptVersion();
-
-        await expectValidVersion(version);
-        output.bumpOK();
-        output.blankLine();
-        return semver.clean(version);
-
-    } catch (error) {
-
-        output.bumpError(error);
-        return getNewVersionFromUser(attempt + 1);
-    }
+    await expectValidVersion(version);
+    bumpOK();
+    blankLine();
+    return clean(version);
+  } catch (error) {
+    bumpError(error);
+    return getNewVersionFromUser(attempt + 1);
+  }
 }
 
 /**
@@ -157,11 +180,11 @@ async function getNewVersionFromUser(attempt = 1) {
  * @return {Promise<void>}
  */
 async function rollbackComposerJson() {
-    if ( ! Fs.existsSync(config.COMPOSER_JSON_PATH)) {
-        return;
-    }
+  if (!existsSync(COMPOSER_JSON_PATH)) {
+    return;
+  }
 
-    await Fs.writeFile(config.COMPOSER_JSON_PATH, formatJSON(config.COMPOSER_JSON_DATA));
+  await writeFile(COMPOSER_JSON_PATH, formatJSON(COMPOSER_JSON_DATA));
 }
 
 /**
@@ -171,11 +194,11 @@ async function rollbackComposerJson() {
  * @return {Promise<void>}
  */
 async function rollbackPackageJson() {
-    if ( ! Fs.existsSync(config.PACKAGE_JSON_PATH)) {
-        return;
-    }
+  if (!existsSync(PACKAGE_JSON_PATH)) {
+    return;
+  }
 
-    await Fs.writeFile(config.PACKAGE_JSON_PATH, formatJSON(config.PACKAGE_JSON_DATA));
+  await writeFile(PACKAGE_JSON_PATH, formatJSON(PACKAGE_JSON_DATA));
 }
 
 /**
@@ -186,19 +209,17 @@ async function rollbackPackageJson() {
  * @return {Promise<*>}
  */
 async function writeVersionToComposerJson(version) {
+  const json = formatJSON(mergeDeepRight(COMPOSER_JSON_DATA, { version }));
 
-    const json = formatJSON(mergeDeepRight(config.COMPOSER_JSON_DATA, { version }));
+  try {
+    await writeFile(COMPOSER_JSON_PATH, json);
+    composerVersionUpdateOK();
+  } catch (error) {
+    composerVersionUpdateError(error);
+    throw error;
+  }
 
-    try {
-        await Fs.writeFile(config.COMPOSER_JSON_PATH, json);
-        output.composerVersionUpdateOK();
-
-    } catch (error) {
-        output.composerVersionUpdateError(error);
-        throw error;
-    }
-
-    return version;
+  return version;
 }
 
 /**
@@ -209,19 +230,17 @@ async function writeVersionToComposerJson(version) {
  * @return {Promise<*>}
  */
 async function writeVersionToPackageJson(version) {
+  const json = formatJSON(mergeDeepRight(PACKAGE_JSON_DATA, { version }));
 
-    const json = formatJSON(mergeDeepRight(config.PACKAGE_JSON_DATA, { version }));
+  try {
+    await writeFile(PACKAGE_JSON_PATH, json);
+    packageVersionUpdateOK();
+  } catch (error) {
+    packageVersionUpdateError(error);
+    throw error;
+  }
 
-    try {
-        await Fs.writeFile(config.PACKAGE_JSON_PATH, json);
-        output.packageVersionUpdateOK();
-
-    } catch (error) {
-        output.packageVersionUpdateError(error);
-        throw error;
-    }
-
-    return version;
+  return version;
 }
 
 /**
@@ -230,14 +249,13 @@ async function writeVersionToPackageJson(version) {
  * @return {*[]}
  */
 function filesToCommit() {
+  const files = [COMPOSER_JSON_PATH];
 
-    const files = [config.COMPOSER_JSON_PATH];
+  if (syncPackageJson) {
+    files.push(PACKAGE_JSON_PATH);
+  }
 
-    if (config.syncPackageJson) {
-        files.push(config.PACKAGE_JSON_PATH);
-    }
-
-    return files;
+  return files;
 }
 
 /**
@@ -249,23 +267,21 @@ function filesToCommit() {
  * @return {Promise<void>}
  */
 async function commitAndTag(version) {
+  const commitMessage = commitMessage
+    ? commitMessage.replace(/%s/, version)
+    : version;
 
-    const commitMessage = config.commitMessage
-        ? config.commitMessage.replace(/%s/, version)
-        : version;
+  try {
+    await simpleGit().add(filesToCommit());
+    await simpleGit().commit(commitMessage);
+    gitCommitOK();
 
-    try {
-        await git().add(filesToCommit());
-        await git().commit(commitMessage);
-        output.gitCommitOK();
-
-        await git().addTag(version);
-        output.gitTagOK();
-
-    } catch (e) {
-        output.error('Git error: ', e);
-        throw e;
-    }
+    await simpleGit().addTag(version);
+    gitTagOK();
+  } catch (e) {
+    error("Git error: ", e);
+    throw e;
+  }
 }
 
 /**
@@ -277,26 +293,21 @@ async function commitAndTag(version) {
  * @return {version}
  */
 async function expectValidVersion(version) {
+  if (valid(version) === null) {
+    throw new Error(`Invalid version number '${version}'`);
+  }
 
-    if (semver.valid(version) === null) {
-        throw new Error(
-            `Invalid version number '${version}'`
-        );
-    }
+  if (CURRENT_VERSION && lte(version, CURRENT_VERSION)) {
+    throw new Error(
+      `New version '${version}' must be greater than current version '${CURRENT_VERSION}'`,
+    );
+  }
 
-    if (config.CURRENT_VERSION && semver.lte(version, config.CURRENT_VERSION)) {
-        throw new Error(
-            `New version '${version}' must be greater than current version '${config.CURRENT_VERSION}'`
-        );
-    }
+  if (await tagExists(version)) {
+    throw new Error(`Tag '${version}' already exists`);
+  }
 
-    if (await tagExists(version)) {
-        throw new Error(
-            `Tag '${version}' already exists`
-        );
-    }
-
-    return version;
+  return version;
 }
 
 /**
@@ -306,8 +317,8 @@ async function expectValidVersion(version) {
  * @return {Promise<boolean>}
  */
 async function tagExists(version) {
-    const tags = await git().tags();
-    return tags.all.some((tag) => tag === semver.clean(version));
+  const tags = await simpleGit().tags();
+  return tags.all.some((tag) => tag === clean(version));
 }
 
 /**
@@ -317,7 +328,7 @@ async function tagExists(version) {
  * @return {string}
  */
 function formatJSON(object) {
-    return JSON.stringify(object, null, 4) + '\n';
+  return JSON.stringify(object, null, 4) + "\n";
 }
 
 /**
@@ -328,5 +339,5 @@ function formatJSON(object) {
  * @return {boolean}
  */
 function argvContainsAny(...flags) {
-    return intersection(flags, config.CLI_ARGUMENTS).length >= 1;
+  return intersection(flags, CLI_ARGUMENTS).length >= 1;
 }

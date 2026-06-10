@@ -1,7 +1,5 @@
-const promptVersion  = require('./version');
-const promptContinue = require('./continue');
+import * as promptVersion from "./version.js";
+import * as promptContinue from "./continue.js";
 
-module.exports = Object.assign({}, exports, {
-    promptVersion,
-    promptContinue,
-});
+exports.promptVersion = promptVersion;
+exports.promptContinue = promptContinue;

@@ -1,6 +1,6 @@
 # php-composer-version [![npm version](https://badge.fury.io/js/%40pxlwidgets%2Fphp-composer-version.svg)](https://badge.fury.io/js/%40pxlwidgets%2Fphp-composer-version)
 
-This is a small CLI tool that bumps versions of php-composer packages, 
+This is a small CLI tool that bumps versions of php-composer packages,
 similar to how `npm version` works. On input of a new version number:
 
 1. If enabled through CLI option (`-p`), the new version is written to the project's `package.json`.
@@ -19,21 +19,21 @@ It depends on your needs which approach to take.
 $ npm install --save-dev @pxlwidgets/php-composer-version
 ```
 
-If you choose to install globally the script should be available under the name 
-`php-composer-version`. Otherwise add an npm script that has access to the local 
+If you choose to install globally the script should be available under the name
+`php-composer-version`. Otherwise add an npm script that has access to the local
 version to `package.json`:
 
 ```json
 {
-    "scripts": {
-        "bump-version": "php-composer-version"
-    }
+  "scripts": {
+    "bump-version": "php-composer-version"
+  }
 }
 ```
- 
-## Usage 
 
-Run the script from the command line from your project root. 
+## Usage
+
+Run the script from the command line from your project root.
 
 ```bash
 # for global installations
@@ -47,7 +47,7 @@ and then perform the steps mentioned above:
 
 > ```
 > Enter new version number (current: 0.2.3)
->     version > 
+>     version >
 > ```
 
 Alternatively the new version can be given as CLI argument with `-V` (capital v) or `--set-version`:
@@ -59,53 +59,56 @@ $ php-composer-version -V 0.2.4
 ```
 
 This approach allows for automated versioning where interactive sessions won't work.
+
 ## Checks
 
 - **Version comparison**
 
   The entered version is compared against the current version to make sure that
   the new version is greater than the current.
-  
+
 - **Version availability check**
-  
+
   The entered version is compared against all git tags to make sure that no
   tag already exists by the name of the version.
-    
+
 - **Git branch check**
 
   By default the branch name to commit on is fixed to `master`. Most of the times
-  a new release should be a master revision. Exceptions might be revisions of 
+  a new release should be a master revision. Exceptions might be revisions of
   pre-release stages as `alpha`, `beta` or `rc`. To override the target branch
   use the `--branch` option.
-  
+
 - **Git status check**
 
-  If the working directory is not clean, the user is asked permission to continue. 
+  If the working directory is not clean, the user is asked permission to continue.
   To skip the prompt and always allow additional changes,
   use the `--allow-dirty` option flag.
-  
+
 ### Self information
 
 #### `-h, --help`
-Displays available options and short documentation, and then exits the process. 
+
+Displays available options and short documentation, and then exits the process.
 
 #### `-v, --version`
- 
+
 Displays the current version of `php-composer-version` and then exits the process.
 
 ### Versioning CLI Options:
 
 #### `-V, --set-version <new-version>`
 
-Specify the new package version to write. If not provided, `php-composer-version` 
+Specify the new package version to write. If not provided, `php-composer-version`
 will prompt interactively. This argument is required for non-interactive sessions.
 
 #### `-b, --branch <name>`
+
 Set the target branch for the version commit. If on any other branch, the process will fail.
 
 #### `-m, --message <message>`
 
-Specify a custom message for the version commit. Sequences of `%s` within given `<message>` is replaced with 
+Specify a custom message for the version commit. Sequences of `%s` within given `<message>` is replaced with
 the version number. If not provided, the new version number is used as the commit message.
 
 #### `-d, --allow-dirty`
@@ -116,7 +119,7 @@ If this flag is given or the user confirms to continue, any currently staged cha
 part of the version commit.
 
 This is primarily useful to include other version-related information, such as changelog updates,
-or generated documentation. 
+or generated documentation.
 
 #### `-p, --sync-package-json`
 
